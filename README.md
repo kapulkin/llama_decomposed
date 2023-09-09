@@ -30,7 +30,7 @@ Adjust config.json from the model directory by changing "model_type" field from 
 ```
 
 Register model with next code
-```
+```python
 from llm.model.LlamaForCasualLM import LlamaForCasualLM
 
 LlamaForCasualLM.register_model()
@@ -48,3 +48,14 @@ model = AutoModelForCausalLM.from_pretrained(
 `model_path` here should point to the model directory with adjusted config.json file
 
 Use better code for debug and development.
+
+# Model reload code
+
+Example for LlamaAttention class
+
+```python
+import llm.model.llama_attention_functions as llama_attention_functions
+
+import importlib
+importlib.reload(llama_attention_functions)
+```
