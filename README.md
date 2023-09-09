@@ -10,7 +10,7 @@ To use Llama model class from this repo instead fo transofrmers' one register it
 
 First of all download Llama model, for example https://huggingface.co/meta-llama/Llama-2-7b-chat-hf
 
-```
+```python
 from huggingface_hub import hf_hub_download
 
 hf_hub_download(repo_id="meta-llama/Llama-2-7b-chat-hf", filename="config.json", local_dir="./", local_dir_use_symlinks=False)
@@ -25,6 +25,11 @@ hf_hub_download(repo_id="meta-llama/Llama-2-7b-chat-hf", filename="tokenizer_con
 ```
 
 Adjust config.json from the model directory by changing "model_type" field from "llama" to "llama_decomposed".
+```json
+    ...
+    "model_type": "llama_decomposed",
+    ...
+```
 
 Register model with next code
 ```
@@ -35,10 +40,10 @@ LlamaForCasualLM.register_model()
 
 # Load model with repo class
 
-```
+```python
 model = AutoModelForCausalLM.from_pretrained(
     model_path,
-    // other args
+    # other args
 )
 ```
 
