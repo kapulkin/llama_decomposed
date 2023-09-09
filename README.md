@@ -4,7 +4,7 @@ There is a LLama model code adopted for better debuging in Jupyter Notebook.
 
 Llama code is taken from https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py and splitted into several files by classes. And after that an adoption is applied to LlamaAttention class to demonstration the technique.
 
-# Register Llama model
+## Register Llama model
 
 To use Llama model class from this repo instead fo transofrmers' one register it.
 
@@ -36,7 +36,7 @@ from llm.model.LlamaForCasualLM import LlamaForCasualLM
 LlamaForCasualLM.register_model()
 ```
 
-# Load model with repo class
+## Load model with repo class
 
 ```python
 model = AutoModelForCausalLM.from_pretrained(
@@ -49,7 +49,7 @@ model = AutoModelForCausalLM.from_pretrained(
 
 Use better code for debug and development.
 
-# Model reload code
+## Model reload code
 
 Example for LlamaAttention class
 
