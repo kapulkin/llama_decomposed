@@ -26,9 +26,7 @@ hf_hub_download(repo_id="meta-llama/Llama-2-7b-chat-hf", filename="tokenizer_con
 
 Adjust config.json from the model directory by changing "model_type" field from "llama" to "llama_decomposed".
 ```json
-    ...
     "model_type": "llama_decomposed",
-    ...
 ```
 
 Register model with next code
