@@ -5,8 +5,9 @@ from peft import LoraConfig, PeftModel, get_peft_model, prepare_model_for_kbit_t
 from transformers import AutoTokenizer, TrainingArguments, Trainer, \
     AutoModelForSequenceClassification, AutoModelForCausalLM, BitsAndBytesConfig, \
     PreTrainedTokenizer
-from functools import partial
+from torch.nn.utils.rnn import pad_sequence
 import torch
+from functools import partial
 import copy
 
 IGNORE_INDEX = -100
@@ -53,6 +54,7 @@ def main():
     model = get_peft_model(model, peft_config)
 
     tokenizer = AutoTokenizer.from_pretrained(model_path)
+    tokenizer.pad_token_id = tokenizer.eos_token_id
 
     batch_size = 2
 

@@ -49,8 +49,8 @@ class ParallelPipelineDecoder(nn.Module):
         super().__init__()
         self.decoder_layer = decoder_layer
     
-    def forward(self, hidden_states, attention_mask, position_ids, past_key_values, output_attentions, use_cache, output_hidden_states, all_hidden_states, next_decoder_cache, all_self_attns, layer_index_tensor):
-        idx = layer_index_tensor.item()
+    def forward(self, hidden_states, attention_mask, idx, position_ids_list, past_key_values, output_attentions, use_cache, output_hidden_states, all_hidden_states, next_decoder_cache, all_self_attns):
+        position_ids = position_ids_list[0]
         
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
@@ -74,7 +74,7 @@ class ParallelPipelineDecoder(nn.Module):
         if output_attentions:
             all_self_attns += (layer_outputs[1],)
             
-        return hidden_states
+        return hidden_states, attention_mask, idx + 1, position_ids_list, past_key_values, output_attentions, use_cache, output_hidden_states, all_hidden_states, next_decoder_cache, all_self_attns
 
 class LlamaPreTrainedModel(PreTrainedModel):
     config_class = LlamaConfig
@@ -112,7 +112,8 @@ class LlamaModel(LlamaPreTrainedModel):
         self.vocab_size = config.vocab_size
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
-        self.layers = nn.ModuleList([LlamaDecoderLayer(config) for _ in range(config.num_hidden_layers)])
+        self.decoders = [LlamaDecoderLayer(config) for _ in range(config.num_hidden_layers)]
+        self.layers = nn.ModuleList(self.decoders)
         self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
         self.gradient_checkpointing = False
@@ -127,7 +128,7 @@ class LlamaModel(LlamaPreTrainedModel):
         self.embed_tokens = value
 
     def enable_parallel_pipeline(self, gpus_num: int):
-        layers = [ParallelPipelineDecoder(decoder) for decoder in self.layers.modules()]
+        layers = [ParallelPipelineDecoder(decoder) for decoder in self.decoders]
         self.layers = Pipe(nn.Sequential(*layers), chunks = gpus_num)
         self.parallel_pipeline_gpus_num = gpus_num
 
@@ -227,8 +228,7 @@ class LlamaModel(LlamaPreTrainedModel):
         next_decoder_cache = () if use_cache else None
 
         if self.parallel_pipeline_gpus_num is not None:
-            layer_index_tensor = torch.arange(len(self.config.num_hidden_layers))
-            hidden_state = self.layers(*[hidden_states, attention_mask, position_ids, past_key_values, output_attentions, use_cache, all_hidden_states, next_decoder_cache, all_self_attns, layer_index_tensor])
+            hidden_state = self.layers(*[hidden_states, attention_mask, 0, [position_ids], past_key_values, output_attentions, use_cache, output_hidden_states, all_hidden_states, next_decoder_cache, all_self_attns])
             hidden_state = hidden_state.local_value()
         else:
             for idx, decoder_layer in enumerate(self.layers):
