@@ -23,7 +23,7 @@ def batch_data_collator(pad_values, samples):
         ], batch_first=True, padding_value=pad_values[key])
     return batch
 
-def main():
+def train():
     LlamaForCasualLM.register_model()
 
     model_path = "models/llama"
@@ -146,6 +146,9 @@ def tokenize(batch, tokenizer: PreTrainedTokenizer):
             result_batch[key].append(value)
 
     return result_batch
+
+def main():
+    train()
         
 if __name__ == "__main__":
     main()
