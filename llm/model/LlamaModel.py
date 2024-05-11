@@ -7,6 +7,7 @@ from transformers.modeling_outputs import BaseModelOutputWithPast
 from transformers.modeling_utils import PreTrainedModel
 from transformers.models.llama.configuration_llama import LlamaConfig
 from transformers.utils import logging
+from torch.distributed.pipeline.sync import Pipe
 
 from typing import List, Optional, Tuple, Union
 
@@ -42,6 +43,38 @@ def _expand_mask(mask: torch.Tensor, dtype: torch.dtype, tgt_len: Optional[int] 
     inverted_mask = 1.0 - expanded_mask
 
     return inverted_mask.masked_fill(inverted_mask.to(torch.bool), torch.finfo(dtype).min)
+
+class ParallelPipelineDecoder(nn.Module):
+    def __init__(self, decoder_layer) -> None:
+        super().__init__()
+        self.decoder_layer = decoder_layer
+    
+    def forward(self, hidden_states, attention_mask, position_ids, past_key_values, output_attentions, use_cache, output_hidden_states, all_hidden_states, next_decoder_cache, all_self_attns, layer_index_tensor):
+        idx = layer_index_tensor.item()
+        
+        if output_hidden_states:
+            all_hidden_states += (hidden_states,)
+
+        past_key_value = past_key_values[idx] if past_key_values is not None else None
+
+        layer_outputs = self.decoder_layer(
+            hidden_states,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_value=past_key_value,
+            output_attentions=output_attentions,
+            use_cache=use_cache,
+        )
+
+        hidden_states = layer_outputs[0]
+
+        if use_cache:
+            next_decoder_cache += (layer_outputs[2 if output_attentions else 1],)
+
+        if output_attentions:
+            all_self_attns += (layer_outputs[1],)
+            
+        return hidden_states
 
 class LlamaPreTrainedModel(PreTrainedModel):
     config_class = LlamaConfig
@@ -83,6 +116,7 @@ class LlamaModel(LlamaPreTrainedModel):
         self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
         self.gradient_checkpointing = False
+        self.parallel_pipeline_gpus_num = None
         # Initialize weights and apply final processing
         self.post_init()
 
@@ -91,6 +125,11 @@ class LlamaModel(LlamaPreTrainedModel):
 
     def set_input_embeddings(self, value):
         self.embed_tokens = value
+
+    def enable_parallel_pipeline(self, gpus_num: int):
+        layers = [ParallelPipelineDecoder(decoder) for decoder in self.layers.modules()]
+        self.layers = Pipe(nn.Sequential(*layers), chunks = gpus_num)
+        self.parallel_pipeline_gpus_num = gpus_num
 
     # Copied from transformers.models.bart.modeling_bart.BartDecoder._prepare_decoder_attention_mask
     def _prepare_decoder_attention_mask(self, attention_mask, input_shape, inputs_embeds, past_key_values_length):
@@ -187,44 +226,49 @@ class LlamaModel(LlamaPreTrainedModel):
         all_self_attns = () if output_attentions else None
         next_decoder_cache = () if use_cache else None
 
-        for idx, decoder_layer in enumerate(self.layers):
-            if output_hidden_states:
-                all_hidden_states += (hidden_states,)
+        if self.parallel_pipeline_gpus_num is not None:
+            layer_index_tensor = torch.arange(len(self.config.num_hidden_layers))
+            hidden_state = self.layers(*[hidden_states, attention_mask, position_ids, past_key_values, output_attentions, use_cache, all_hidden_states, next_decoder_cache, all_self_attns, layer_index_tensor])
+            hidden_state = hidden_state.local_value()
+        else:
+            for idx, decoder_layer in enumerate(self.layers):
+                if output_hidden_states:
+                    all_hidden_states += (hidden_states,)
 
-            past_key_value = past_key_values[idx] if past_key_values is not None else None
+                past_key_value = past_key_values[idx] if past_key_values is not None else None
 
-            if self.gradient_checkpointing and self.training:
+                if self.gradient_checkpointing and self.training:
 
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        # None for past_key_value
-                        return module(*inputs, past_key_value, output_attentions)
+                    def create_custom_forward(module):
+                        def custom_forward(*inputs):
+                            # None for past_key_value
+                            return module(*inputs, past_key_value, output_attentions)
 
-                    return custom_forward
+                        return custom_forward
 
-                layer_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(decoder_layer),
-                    hidden_states,
-                    attention_mask,
-                    position_ids,
-                )
-            else:
-                layer_outputs = decoder_layer(
-                    hidden_states,
-                    attention_mask=attention_mask,
-                    position_ids=position_ids,
-                    past_key_value=past_key_value,
-                    output_attentions=output_attentions,
-                    use_cache=use_cache,
-                )
+                    layer_outputs = torch.utils.checkpoint.checkpoint(
+                        create_custom_forward(decoder_layer),
+                        hidden_states,
+                        attention_mask,
+                        position_ids,
+                    )
+                else:
+                    layer_outputs = decoder_layer(
+                        hidden_states,
+                        attention_mask=attention_mask,
+                        position_ids=position_ids,
+                        past_key_value=past_key_value,
+                        output_attentions=output_attentions,
+                        use_cache=use_cache,
+                    )
 
-            hidden_states = layer_outputs[0]
+                hidden_states = layer_outputs[0]
 
-            if use_cache:
-                next_decoder_cache += (layer_outputs[2 if output_attentions else 1],)
+                if use_cache:
+                    next_decoder_cache += (layer_outputs[2 if output_attentions else 1],)
 
-            if output_attentions:
-                all_self_attns += (layer_outputs[1],)
+                if output_attentions:
+                    all_self_attns += (layer_outputs[1],)
 
         hidden_states = self.norm(hidden_states)
 

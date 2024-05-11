@@ -5,6 +5,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss
+from torch.distributed import rpc
+import tempfile
 
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers import AutoConfig, MODEL_FOR_CAUSAL_LM_MAPPING
@@ -46,6 +48,18 @@ class LlamaForCasualLM(LlamaPreTrainedModel):
 
     def get_decoder(self):
         return self.model
+
+    def enable_parallel_pipeline(self, gpus_num: int):
+        tmpfile = tempfile.NamedTemporaryFile()
+        rpc.init_rpc(
+            name="worker",
+            rank=0,
+            world_size=1,
+            rpc_backend_options=rpc.TensorPipeRpcBackendOptions(
+                init_method="file://{}".format(tmpfile.name)
+            )
+        )
+        self.model.enable_parallel_pipeline(gpus_num)
 
     def forward(
         self,
