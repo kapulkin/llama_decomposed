@@ -7,3 +7,4 @@ bitsandbytes
 datasets
 evaluate
 mlflow
+huggingface-hub
